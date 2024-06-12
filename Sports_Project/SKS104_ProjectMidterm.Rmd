@@ -1,0 +1,270 @@
+---
+title: "Unraveling the Dynamics of the NFL Passing Game: The Impact of Downfield Yardage on Passing Play Success"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+Step 0: Scrap the data and load the libraries 
+```{r}
+# Load libraries
+library(nflfastR)
+library(gsisdecoder)
+library(devtools)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(tidyverse)
+library(purrr)
+library(readr)
+library(dplyr)
+library(reshape2)
+library(GGally)
+library(forecast)
+library(stats)
+library(car)
+library(caret)
+
+# Scrape NFL play-by-play data from 2013 to 2022
+for (season in 2013:2022) {
+    games <- fast_scraper_schedules(seasons = season)
+    game_ids <- games$game_id
+    pbp_data <- data.frame(matrix(ncol = 339, nrow = 0))
+    
+    for (id in game_ids) {
+        print(id)
+        tryCatch({
+            # temp <- get_pbp_gc(id)
+            temp <- fast_scraper(id)
+            pbp_data <- rbind(pbp_data, temp)
+        }, error = function(e) { 
+        })
+    }
+    filename <- paste(season, "_nfl_pbp_data.csv", sep = '')
+    write.csv(pbp_data, filename)
+}
+```
+
+View Data
+```{r}
+column_names <- names(pbp_data)
+print(column_names)
+```
+
+
+Step 1: Cleaning Data
+```{r}
+# Identify missing values
+missing_values <- is.na(pbp_data$passing_yards) | is.na(pbp_data$air_yards) | is.na(pbp_data$yards_gained)
+
+# Handle missing values by imputing with means
+pbp_data$passing_yards[is.na(pbp_data$passing_yards)] <- mean(pbp_data$passing_yards, na.rm = TRUE)
+pbp_data$air_yards[is.na(pbp_data$air_yards)] <- mean(pbp_data$air_yards, na.rm = TRUE)
+pbp_data$yards_gained[is.na(pbp_data$yards_gained)] <- mean(pbp_data$yards_gained, na.rm = TRUE)
+
+# Check for any remaining missing values
+sum(is.na(pbp_data$passing_yards))  
+```
+
+Step 2: Descriptive Steps
+```{r}
+# Check the structure of the data
+str(pbp_data)
+
+# Summary statistics for numeric variables
+summary_stats <- summary(pbp_data)
+print(summary_stats)
+
+# Descriptive statistics for specific variables
+important_vars <- c("yards_gained", "air_yards", "passing_yards")
+selected_data <- pbp_data[, important_vars, with = FALSE]
+
+# Calculate statistics
+important_stats <- summary(selected_data)
+
+# Print the statistics
+print(important_stats)
+
+# Histogram plot for yards_gained overall average
+ggplot(pbp_data, aes(x = yards_gained)) +
+  geom_histogram(fill = "skyblue", color = "black", bins = 30) +
+  labs(title = "Histogram of Yards Gained", x = "Yards Gained", y = "Frequency")
+
+# Boxplot between passing_yards and air_yards
+ggplot(pbp_data, aes(x = passing_yards, y = air_yards)) +
+  geom_boxplot(fill = "lightgreen", color = "black") +
+  labs(title = "Boxplot of Air Yards by Passing Yards", x = "Passing Yards", y = "Air Yards")
+
+```
+
+Part 3: Inferential Statistics
+```{r}
+# Perform multiple linear regression
+model <- lm(passing_yards ~ air_yards + yards_gained, data = pbp_data)
+
+# Summarize the regression results
+summary(model)
+
+# Check ANOVA table
+anova(model)
+
+# Check model assumptions
+par(mfrow = c(2, 2)) 
+plot(model)
+
+# Check residual analysis
+plot(model)
+
+# Check R-squared and Adjusted R-squared
+r_squared <- summary(model)$r.squared
+adj_r_squared <- summary(model)$adj.r.squared
+
+# Compute residuals
+residuals <- residuals(model)
+
+# Compute standard deviation and mean of residuals
+residual_std_dev <- sd(residuals)
+residual_mean <- mean(residuals)
+
+# Diagnose influential points
+influenceIndexPlot(model)
+
+# Assess multicollinearity
+vif(model)
+
+# Cross-validation
+trainControl <- trainControl(method = "cv", number = 5) # 5-fold cross-validation
+cv_model <- train(passing_yards ~ air_yards + yards_gained, data = pbp_data, method = "lm", trControl = trainControl)
+print(cv_model)
+
+# Print out these values to see easier
+cat("R-squared:", r_squared, "\n")
+cat("Adjusted R-squared:", adj_r_squared, "\n")
+cat("Residual Standard Deviation:", residual_std_dev, "\n")
+cat("Residual Mean:", residual_mean, "\n")
+```
+
+
+Part 4: Additional Analysis
+```{r}
+# Distribution of yards gained by week.Identifies the trend or pattern in the distribution of yards gained over different weeks, finding potential variations and outliers.
+plot0 <- ggplot(pbp_data, aes(x = factor(week), y = yards_gained)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of Yards Gained by Week", x = "Week", y = "Yards Gained") +
+  theme_minimal()
+
+# Scatter plot shows the relationship between pass length and air yards.For pass length, comparing of air yards based on pass length
+plot1 <- ggplot(pbp_data, aes(x = pass_length, y = air_yards)) +
+  geom_point() +
+  geom_vline(xintercept = 20, linetype = "dashed", color = "red") +
+  labs(title = "Pass Length vs. Air Yards", x = "Pass Length", y = "Air Yards") +
+  theme_minimal()
+
+# Scatter plot visualizes the relationship between yards gained and yards after catch, showing impact of yards gained in relation to yards after catch.
+plot2 <- ggplot(pbp_data, aes(x = yards_gained, y = yards_after_catch)) +
+  geom_point() +
+  geom_vline(xintercept = 20, linetype = "dashed", color = "red") +  
+  labs(title = "Yards Gained vs. Yards After Catch", x = "Yards Gained", y = "Yards After Catch") +
+  theme_minimal()
+
+# Box plot of passing yards by down helps understand the distribution of passing yards for each down, showing variations in passing yards across different downs
+plot3 <- ggplot(pbp_data, aes(x = factor(down), y = passing_yards)) +
+  geom_boxplot(fill = "lightblue", color = "black", alpha = 0.7) +
+  labs(title = "Passing Yards by Down", x = "Down", y = "Passing Yards") +
+  theme_minimal()
+
+# Line plot demonstrates the trend of yards gained over time, showing patterns or significant changes in the yards gained during the observed period
+plot4 <- ggplot(pbp_data, aes(x = game_date, y = yards_gained)) +
+  geom_line(color = "steelblue") +
+  labs(title = "Yards Gained over Time", x = "Game Date", y = "Yards Gained") +
+  theme_minimal() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))
+
+
+# Bar plot showcases yards gained on each home team with each down, showing a comparison of yardage based on the home team and down.
+plot5 <- ggplot(pbp_data, aes(x = home_team, y = yards_gained, fill = as.factor(down))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Yards Gained on Each Home Team with Each Down",
+       x = "Team", y = "Yards Gained", fill = "Down") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),     
+        plot.margin = margin(l = 50, r = 50, b = 50, t = 50))  
+
+
+# Stacked bar plots display the frequency of play types by home team, showing a distribution of different play types within and across teams
+plot6 <- ggplot(pbp_data, aes(x = home_team, fill = play_type)) +
+  geom_bar(position = "stack") +
+  labs(title = "Stacked Bar Plot of Play Type by Home Team", x = "Team", y = "Frequency") +
+  theme_minimal()
+
+# Stacked bar plots display the frequency of play types by away team, showing a distribution of different play types within and across teams
+plot7 <- ggplot(pbp_data, aes(x = away_team, fill = play_type)) +
+  geom_bar(position = "stack") +
+  labs(title = "Stacked Bar Plot of Play Type by Away Team", x = "Team", y = "Frequency") +
+  theme_minimal()
+
+# Scatter plot with a linear regression line shows the relationship between passing yards and air yards, showing a correlation between these two variables and linear trends.
+plot8 <- ggplot(pbp_data, aes(x = passing_yards, y = air_yards)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Scatter Plot of Passing Yards and Air Yards", x = "Passing Yards", y = "Air Yards") +
+  theme_minimal()
+
+
+# Correlation plot
+plot9 <- ggpairs(pbp_data, columns = c("passing_yards", "air_yards", "yards_gained"))
+
+# Showing plots
+plot0
+plot1
+plot2
+plot3
+plot4
+plot5
+plot6
+plot7
+plot8
+plot9
+```
+
+Part 5: Additional Time Series Analysis
+```{r}
+# Convert the game date column to the date format
+pbp_data$game_date <- as.Date(pbp_data$game_date)
+
+# Create a time series plot for yards gained over time
+ggplot(pbp_data, aes(x = game_date, y = yards_gained)) +
+  geom_line() +
+  labs(title = "Yards Gained over Time", x = "Game Date", y = "Yards Gained") +
+  theme_minimal()
+
+# Time series object for yards_gained
+ts_data <- ts(pbp_data$yards_gained, frequency = 1)
+
+#Forecast future values for yards gained
+arima_model <- auto.arima(ts_data)
+forecast_data <- forecast(arima_model, h = 10)  
+forecast_data
+
+# Plot the forecast for yards gained
+plot(forecast_data, xlab = "Time", ylab = "Yards Gained", main = "ARIMA Forecast for Yards Gained")
+
+# Time series plot for passing yards over time
+ts_data <- ts(pbp_data$passing_yards, frequency = 12)
+plot.ts(ts_data, main = "Time Series Plot for Passing Yards", ylab = "Passing Yards")
+
+# Fit an ARIMA model for passing yards
+arima_model <- auto.arima(ts_data)
+forecast_data <- forecast(arima_model, h = 12)  # Forecasting the next 12 periods
+plot(forecast_data, main = "ARIMA Forecast for Passing Yards", xlab = "Time", ylab = "Passing Yards")
+```
+
+
+
+
+
+
+
